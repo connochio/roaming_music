@@ -1,0 +1,41 @@
+fade_volume:
+  name: Fade Volume
+  description: Smoothly fade the volume of one or more media players.
+  fields:
+    entity_id:
+      name: Entity
+      description: Media player entity (or entities) to fade.
+      required: true
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+    target_volume:
+      name: Target Volume
+      description: Target volume level (0.0–1.0).
+      required: true
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.01
+    duration:
+      name: Duration
+      description: Fade duration in seconds.
+      required: true
+      selector:
+        number:
+          min: 0.0
+          max: 60.0
+          step: 0.1
+    curve:
+      name: Curve Type
+      description: Fade curve type.
+      required: false
+      default: logarithmic
+      selector:
+        select:
+          options:
+            - logarithmic
+            - bezier
+            - linear
