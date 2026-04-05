@@ -2,7 +2,7 @@
 ![GitHub Release](https://img.shields.io/github/v/release/connochio/roaming_music?style=for-the-badge&label=Current%20Release&color=41BDF5&cacheSeconds=15600)
 ![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/connochio/roaming_music?style=for-the-badge)
 
-# Ambient Music
+# Roaming Music
 
 A Home Assistant integration for making your music roam with you around your home.
 
@@ -14,3 +14,16 @@ A Home Assistant integration for making your music roam with you around your hom
 Install this integration via HACS with the link above.
 
 <br />
+
+## Setup
+
+1. Install the integration from your integrations page
+2. After installing, go to the integration and click 'Add device' to create a room
+3. Give the room a name and submit
+4. Click the cog icon on the newly created room, and set the speaker(s), presence sensors, room default volume and fade duration.
+5. After clicking submit, select the presence sensor state that shows occupancy.
+
+> [!IMPORTANT]
+> In order for music to 'roam' currently, music must be playing on ***all*** speakers in all configured rooms.
+> 
+> This can be done via a Music Assistant player sync group
