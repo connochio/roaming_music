@@ -1,0 +1,13 @@
+{
+  "domain": "roaming_music",
+  "name": "Roaming Music",
+  "codeowners": ["@connochio"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/connochio/roaming_music#readme",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/connochio/roaming_music/issues",
+  "requirements": [],
+  "version": "v0.1.0-dev.0"
+}

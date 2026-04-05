@@ -1,0 +1,94 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Roaming Music",
+        "description": "Add a room to Roaming Music"
+      },
+      "room": {
+        "title": "Add Room",
+        "description": "Enter a name for the new room.",
+        "data": {
+          "name": "Room Name"
+        }
+      }
+    },
+    "error": {
+      "name_already_in_use": "A room with this name already exists.",
+      "name_empty": "Room name cannot be empty.",
+      "name_reserved": "This room name is reserved."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Room Configuration",
+        "description": "Select the speakers and presence sensors for this room.",
+        "data": {
+          "speakers": "Speakers",
+          "presence_sensors": "Presence Sensors",
+          "default_volume": "Default Volume",
+          "fade_duration": "Fade Duration (seconds)",
+          "fade_curve": "Fade Curve"
+        }
+      },
+      "sensor_states": {
+        "title": "Sensor State Mapping",
+        "description": "Select which state values indicate occupancy for each mapped sensor.{no_states_warning}"
+      }
+    },
+    "error": {
+      "entity_not_found": "One or more selected entities were not found in Home Assistant.",
+      "no_states_for_sensor": "This sensor has no selectable states. It will not trigger occupancy until its state is known.",
+      "speaker_wrong_domain": "Speakers must be media_player entities.",
+      "default_volume_out_of_range": "Default volume must be between 0.0 and 1.0."
+    }
+  },
+  "entity": {
+    "switch": {
+      "master_switch": {
+        "name": "Master Switch"
+      }
+    },
+    "sensor": {
+      "roaming_state": {
+        "name": "Roaming State"
+      },
+      "active_rooms": {
+        "name": "Active Rooms"
+      }
+    },
+    "number": {
+      "default_volume": {
+        "name": "Default Volume"
+      },
+      "fade_duration": {
+        "name": "Fade Duration"
+      }
+    }
+  },
+  "services": {
+    "fade_volume": {
+      "name": "Fade Volume",
+      "description": "Smoothly fade the volume of one or more media players.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity",
+          "description": "Media player entity (or entities) to fade."
+        },
+        "target_volume": {
+          "name": "Target Volume",
+          "description": "Target volume level (0.0\u20131.0)."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Fade duration in seconds."
+        },
+        "curve": {
+          "name": "Curve",
+          "description": "Fade curve type: logarithmic, bezier, or linear."
+        }
+      }
+    }
+  }
+}
