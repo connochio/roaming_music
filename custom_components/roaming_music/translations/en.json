@@ -19,9 +19,6 @@
       "name_reserved": "This room name is reserved."
     }
   },
-  "abort": {
-    "global_no_options": "The Roaming Music device has no configurable options. Add a Room to configure speakers and presence sensors."
-  },
   "options": {
     "step": {
       "init": {

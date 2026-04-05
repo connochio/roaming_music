@@ -1,4 +1,3 @@
-"""Roaming Music sensor platform."""
 from __future__ import annotations
 
 import logging
@@ -15,13 +14,11 @@ from .coordinator import RoamingCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities,
 ) -> None:
-    """Set up sensor entities for a config entry."""
     if entry.data.get("type") != ENTRY_TYPE_GLOBAL:
         return
 
@@ -31,26 +28,21 @@ async def async_setup_entry(
         ActiveRoomsSensor(coordinator),
     ])
 
-
 class RoamingStateSensor(SensorEntity):
-    """Sensor reporting the current roaming operational state."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "roaming_state"
     _attr_unique_id = "roaming_music_roaming_state"
 
     def __init__(self, coordinator: RoamingCoordinator) -> None:
-        """Initialize the roaming state sensor."""
         self._coordinator = coordinator
         self._attr_native_value = coordinator.roaming_state
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return the device info for this entity."""
         return DeviceInfo(**DEVICE_INFO)
 
     async def async_added_to_hass(self) -> None:
-        """Handle entity added to hass — subscribe to coordinator state signals."""
         unsub = async_dispatcher_connect(
             self.hass, SIGNAL_STATE_CHANGED, self._handle_state_update
         )
@@ -58,39 +50,32 @@ class RoamingStateSensor(SensorEntity):
 
     @callback
     def _handle_state_update(self) -> None:
-        """React to a coordinator state change signal."""
         self._attr_native_value = self._coordinator.roaming_state
         self.async_write_ha_state()
         _LOGGER.debug("RoamingStateSensor updated: state=%s", self._attr_native_value)
 
-
 class ActiveRoomsSensor(SensorEntity):
-    """Sensor reporting the number of currently active (occupied) rooms."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "active_rooms"
     _attr_unique_id = "roaming_music_active_rooms"
 
     def __init__(self, coordinator: RoamingCoordinator) -> None:
-        """Initialize the active rooms sensor."""
         self._coordinator = coordinator
         self._attr_native_value = len(coordinator.active_room_names)
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return the device info for this entity."""
         return DeviceInfo(**DEVICE_INFO)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra state attributes: room list and per-room errors."""
         return {
             "room_list": self._coordinator.active_room_names,
             "last_errors": self._coordinator.per_room_errors,
         }
 
     async def async_added_to_hass(self) -> None:
-        """Handle entity added to hass — subscribe to coordinator state signals."""
         unsub = async_dispatcher_connect(
             self.hass, SIGNAL_STATE_CHANGED, self._handle_state_update
         )
@@ -98,7 +83,6 @@ class ActiveRoomsSensor(SensorEntity):
 
     @callback
     def _handle_state_update(self) -> None:
-        """React to a coordinator state change signal."""
         self._attr_native_value = len(self._coordinator.active_room_names)
         self.async_write_ha_state()
         _LOGGER.debug(
