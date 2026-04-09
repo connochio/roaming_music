@@ -20,28 +20,43 @@
     }
   },
   "options": {
+    "abort": {
+      "global_no_options": "The Roaming Music device has no configurable options. Add a room entry to configure speakers and presence sensors."
+    },
     "step": {
       "init": {
         "title": "Room Configuration",
-        "description": "Select the speakers and presence sensors for this room.",
+        "description": "Choose which room settings to edit.{save_notice}",
+        "menu_options": {
+          "speakers_volume": "Speakers & Volume",
+          "presence_sensors": "Presence Sensors"
+        }
+      },
+      "speakers_volume": {
+        "title": "Speakers & Volume",
+        "description": "Configure the speakers and volume settings for this room.",
         "data": {
           "speakers": "Speakers",
-          "presence_sensors": "Presence Sensors",
           "default_volume": "Default Volume",
           "fade_duration": "Fade Duration (seconds)",
           "fade_curve": "Fade Curve"
         }
       },
-      "sensor_states": {
-        "title": "Sensor State Mapping",
-        "description": "Select which state values indicate occupancy for each mapped sensor.{no_states_warning}"
+      "presence_sensors": {
+        "title": "Presence Sensors",
+        "description": "Select presence sensors and configure their occupied state values.{no_states_warning}",
+        "data": {
+          "presence_sensors": "Presence Sensors"
+        }
       }
     },
     "error": {
       "entity_not_found": "One or more selected entities were not found in Home Assistant.",
       "no_states_for_sensor": "This sensor has no selectable states. It will not trigger occupancy until its state is known.",
       "speaker_wrong_domain": "Speakers must be media_player entities.",
-      "default_volume_out_of_range": "Default volume must be between 0.0 and 1.0."
+      "default_volume_out_of_range": "Default volume must be between 0.0 and 1.0.",
+      "fade_duration_out_of_range": "Fade duration must be between 1.0 and 30.0 seconds.",
+      "fade_curve_invalid": "Fade curve must be one of: logarithmic, bezier, or linear."
     }
   },
   "entity": {
