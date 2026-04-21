@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
@@ -18,14 +18,13 @@ from homeassistant.util import dt as dt_util
 from . import fade_engine
 from .const import (
     CONF_DEFAULT_VOLUME,
-    CONF_FADE_CURVE,
     CONF_FADE_DURATION,
     CONF_OCCUPIED_STATES,
     CONF_PRESENCE_SENSORS,
     CONF_SPEAKERS,
-    DEFAULT_FADE_CURVE,
     DEFAULT_FADE_DURATION,
     DEFAULT_VOLUME,
+    FADE_CURVE_LOGARITHMIC,
     FADE_TIMEOUT_BUFFER,
     ROAMING_STATE_ACTIVE,
     ROAMING_STATE_ERROR,
@@ -111,7 +110,6 @@ class RoamingCoordinator:
             if r.last_error is not None
         }
 
-    @callback
     def dispatch_state_update(self) -> None:
         """Fire the integration's dispatcher signal so global sensors refresh their native values."""
         async_dispatcher_send(self._hass, SIGNAL_STATE_CHANGED)
@@ -144,7 +142,10 @@ class RoamingCoordinator:
             return
 
         fade_duration = room.fade_duration
-        fade_curve = str(options.get(CONF_FADE_CURVE, DEFAULT_FADE_CURVE))
+        # AMD-2 (Story 3.5): Coordinator-triggered fades always use logarithmic. The
+        # exposed ``fade_volume`` service still accepts a curve parameter, but presence-driven
+        # room fades intentionally ignore any stale ``CONF_FADE_CURVE`` key in ``room.options``.
+        fade_curve = FADE_CURVE_LOGARITHMIC
 
         room.fade_active = True
         self.dispatch_state_update()
@@ -310,7 +311,6 @@ class RoamingCoordinator:
         )
         sensors = list(entry.options.get(CONF_PRESENCE_SENSORS, []))
         if sensors:
-            @callback
             def _on_sensor_change(event: Any) -> None:
                 self.handle_presence_change(
                     entry.entry_id,
@@ -365,12 +365,14 @@ class RoamingCoordinator:
                     changed_entity_id,
                     new_state_value,
                 )
-            room.occupied = False
+            occupied = self._evaluate_room_occupancy(room, changed_entity_id, new_state_value)
+            room.occupied = occupied
             _LOGGER.debug(
-                "Presence change: room=%s sensor=%s state=%s occupied=False (sensor unavailable) roaming_enabled=%s",
+                "Presence change: room=%s sensor=%s state=%s occupied=%s (sensor unavailable) roaming_enabled=%s",
                 room.name,
                 changed_entity_id,
                 new_state_value,
+                occupied,
                 self.roaming_enabled,
             )
             if not self.roaming_enabled:
@@ -379,7 +381,10 @@ class RoamingCoordinator:
                     room.name,
                 )
             else:
-                self.dispatch_fade(entry_id, 0.0)
+                if occupied:
+                    self.dispatch_fade(entry_id, room.target_volume)
+                else:
+                    self.dispatch_fade(entry_id, 0.0)
             self.dispatch_state_update()
             return
         
