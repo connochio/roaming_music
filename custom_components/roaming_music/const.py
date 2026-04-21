@@ -1,3 +1,5 @@
+"""Roaming Music constants — config keys, fade curve options, defaults, device info."""
+
 from __future__ import annotations
 
 import re
@@ -48,6 +50,10 @@ DEVICE_INFO = {
 }
 
 def slugify_room_name(name: str) -> str:
+    """
+    Produce an ASCII slug suitable for unique_id construction from a user-provided room name.
+    Returns ``"room"`` when the input slugifies to an empty string.
+    """
     normalized = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^a-z0-9]+", "_", normalized.lower()).strip("_")
     return slug or "room"

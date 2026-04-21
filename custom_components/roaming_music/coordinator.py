@@ -1,3 +1,5 @@
+"""Roaming Music coordinator — room registry, presence handling, and fade task dispatch."""
+
 from __future__ import annotations
 
 import asyncio
@@ -37,6 +39,19 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class RoomState:
+    """
+    Per-room runtime state tracked by the coordinator.
+    :param entry_id: Config entry ID this room corresponds to.
+    :param name: User-facing room name.
+    :param occupied: Latest OR-evaluated occupancy across the room's presence sensors.
+    :param fade_active: True while a fade task is in flight for this room.
+    :param target_volume: Current target volume for occupied fades (driven by the per-room number entity).
+    :param fade_duration: Current fade duration in seconds (driven by the per-room number entity).
+    :param options: Snapshot of the config entry options used for fade dispatch and occupancy evaluation.
+    :param last_error: Most recent human-readable error string, or ``None`` if the room is healthy.
+    :param last_error_time: UTC timestamp the last error was recorded, paired with ``last_error``.
+    """
+
     entry_id: str
     name: str
     occupied: bool = False
@@ -48,6 +63,7 @@ class RoomState:
     last_error_time: datetime | None = None
 
 class RoamingCoordinator:
+    """Central coordinator owning room state, presence listeners, and per-room fade tasks."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
@@ -58,6 +74,7 @@ class RoamingCoordinator:
         _LOGGER.debug("RoamingCoordinator initialized")
 
     def set_roaming_enabled(self, enabled: bool) -> None:
+        """Update the global roaming-enabled flag; no-op when the value is unchanged."""
         previous = self.roaming_enabled
         if enabled == previous:
             return
@@ -70,6 +87,7 @@ class RoamingCoordinator:
 
     @property
     def roaming_state(self) -> str:
+        """Return the aggregate roaming state (``error``/``fading``/``active``/``idle``) across all rooms."""
         rooms = self._rooms.values()
         if any(r.last_error is not None for r in rooms):
             return ROAMING_STATE_ERROR
@@ -81,10 +99,12 @@ class RoamingCoordinator:
 
     @property
     def active_room_names(self) -> list[str]:
+        """Return the names of currently-occupied rooms."""
         return [r.name for r in self._rooms.values() if r.occupied]
 
     @property
     def per_room_errors(self) -> dict[str, str]:
+        """Return a ``{room_name: last_error}`` map for rooms currently reporting an error."""
         return {
             r.name: r.last_error
             for r in self._rooms.values()
@@ -93,10 +113,15 @@ class RoamingCoordinator:
 
     @callback
     def dispatch_state_update(self) -> None:
+        """Fire the integration's dispatcher signal so global sensors refresh their native values."""
         async_dispatcher_send(self._hass, SIGNAL_STATE_CHANGED)
         _LOGGER.debug("Dispatcher signal fired: %s", SIGNAL_STATE_CHANGED)
 
     def dispatch_fade(self, entry_id: str, target_volume: float) -> None:
+        """
+        Start (or restart) a fade task for a room, cancelling any in-flight fade for that room.
+        :param target_volume: Target volume level in the range ``0.0``–``1.0``.
+        """
         room = self._rooms.get(entry_id)
         if room is None:
             return
@@ -236,6 +261,10 @@ class RoamingCoordinator:
 
     def _cancel_listeners(
         self, entry_id: str, listeners: list[Callable[[], None]]) -> None:
+        """
+        Invoke each state-change listener cancel callback, logging (but not raising) per-listener errors.
+        :param listeners: Cancel callbacks returned by :func:`async_track_state_change_event`.
+        """
         for cancel_fn in listeners:
             try:
                 cancel_fn()
@@ -247,6 +276,10 @@ class RoamingCoordinator:
                 )
 
     def register_room(self, entry: ConfigEntry) -> None:
+        """
+        Register or re-register a room entry — replaces prior ``RoomState``, cancels stale listeners,
+        and installs a fresh presence listener bound to the room's configured sensors.
+        """
         existing_listeners = self._room_listeners.pop(entry.entry_id, [])
         if existing_listeners:
             self._cancel_listeners(entry.entry_id, existing_listeners)
@@ -293,6 +326,7 @@ class RoamingCoordinator:
         _LOGGER.debug("RoamingCoordinator: %d room(s) registered", len(self._rooms))
 
     def unregister_room(self, entry_id: str) -> None:
+        """Unregister a room — cancel its presence listeners and active fade task, then drop state."""
         listeners = self._room_listeners.pop(entry_id, [])
         self._cancel_listeners(entry_id, listeners)
         if listeners:
@@ -311,6 +345,7 @@ class RoamingCoordinator:
         new_state: Any,
         old_state: Any,
     ) -> None:
+        """React to a presence sensor state change — update occupancy and dispatch a fade when enabled."""
         room = self._rooms.get(entry_id)
         if room is None:
             return
@@ -387,6 +422,11 @@ class RoamingCoordinator:
         changed_entity_id: str,
         changed_state: str,
     ) -> bool:
+        """
+        Evaluate OR-logic occupancy across a room's presence sensors. The ``changed_entity_id`` /
+        ``changed_state`` pair is treated as authoritative for that sensor (bypasses the HA state read).
+        Returns True when any configured sensor reports an occupied state per the saved mapping.
+        """
         options = room.options or {}
         presence_sensors = options.get(CONF_PRESENCE_SENSORS, [])
         occupied_states_map = options.get(CONF_OCCUPIED_STATES, {})
@@ -401,6 +441,10 @@ class RoamingCoordinator:
         return False
 
     def update_room_default_volume(self, entry_id: str, volume: float) -> None:
+        """
+        Update a room's current target volume (driven by the per-room number entity).
+        :param volume: New target volume in the range ``0.0``–``1.0``.
+        """
         room = self._rooms.get(entry_id)
         if room is None:
             return
@@ -412,6 +456,10 @@ class RoamingCoordinator:
         )
 
     def update_room_fade_duration(self, entry_id: str, duration: float) -> None:
+        """
+        Update a room's current fade duration (driven by the per-room number entity).
+        :param duration: New fade duration in seconds.
+        """
         room = self._rooms.get(entry_id)
         if room is None:
             return
@@ -423,6 +471,7 @@ class RoamingCoordinator:
         )
 
     async def async_teardown(self) -> None:
+        """Cancel all presence listeners and fade tasks and clear coordinator state."""
         listener_count = sum(len(listeners) for listeners in self._room_listeners.values())
         active_fade_count = sum(1 for task in self._fade_tasks.values() if not task.done())
         _LOGGER.debug(

@@ -1,3 +1,5 @@
+"""Roaming Music integration — setup/teardown for the global and per-room config entries."""
+
 from __future__ import annotations
 
 import asyncio
@@ -34,6 +36,10 @@ _FADE_VOLUME_SCHEMA = vol.Schema(
 )
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """
+    Set up a Roaming Music config entry. ``entry.data["type"]`` selects the global vs. room branch.
+    Returns True on successful setup, False when a room entry cannot find its global coordinator.
+    """
     entry_type = entry.data.get("type")
 
     if entry_type == ENTRY_TYPE_GLOBAL:
@@ -48,6 +54,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         async def svc_fade_volume(call: ServiceCall) -> None:
+            # Service handler wraps fade_engine.fade_volume in a timeout-bounded background task so
+            # the caller's service call returns immediately and a stuck fade can't hold the loop.
             entity_ids: list[str] = call.data["entity_id"]
             target_volume: float = float(call.data["target_volume"])
             duration: float = float(call.data["duration"])
@@ -139,6 +147,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """
+    Unload a Roaming Music config entry — tears down the coordinator for global entries and
+    unregisters the room for room entries. Returns False if a platform unload fails.
+    """
     entry_type = entry.data.get("type")
 
     if entry_type == ENTRY_TYPE_GLOBAL:

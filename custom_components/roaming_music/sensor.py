@@ -1,3 +1,5 @@
+"""Roaming Music sensor platform — global-entry roaming state and active-room-count sensors."""
+
 from __future__ import annotations
 
 import logging
@@ -19,6 +21,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities,
 ) -> None:
+    """Install the global-entry diagnostic sensors; no-op for room entries."""
     if entry.data.get("type") != ENTRY_TYPE_GLOBAL:
         return
 
@@ -29,6 +32,7 @@ async def async_setup_entry(
     ])
 
 class RoamingStateSensor(SensorEntity):
+    """Aggregate roaming state sensor — mirrors :attr:`RoamingCoordinator.roaming_state`."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "roaming_state"
@@ -55,6 +59,7 @@ class RoamingStateSensor(SensorEntity):
         _LOGGER.debug("RoamingStateSensor updated: state=%s", self._attr_native_value)
 
 class ActiveRoomsSensor(SensorEntity):
+    """Count of currently-occupied rooms, with the room list and per-room errors in attributes."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "active_rooms"

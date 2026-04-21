@@ -1,3 +1,5 @@
+"""Roaming Music config flow — global entry creation, room entries, and menu-style options flow."""
+
 from __future__ import annotations
 
 import logging
@@ -32,14 +34,20 @@ ROOM_STEP_SCHEMA = vol.Schema({vol.Required(CONF_NAME): str})
 _EXCLUDED_STATES = frozenset({"unknown", "unavailable"})
 
 def _is_binary_sensor(entity_id: str) -> bool:
+    """Return True when ``entity_id`` belongs to the ``binary_sensor`` domain."""
     return entity_id.split(".")[0] == "binary_sensor"
 
 def _build_multi_state_validator(known_states: list[str]) -> Any:
+    """
+    Build a voluptuous validator for a multi-select state field.
+    :param known_states: States to constrain the selector to; empty list falls back to free-form ``str``.
+    """
     if not known_states:
         return [str]
     return [vol.In(known_states)]
 
 def _get_known_states(hass: Any, entity_id: str) -> list[str]:
+    """Collect the selectable states for a sensor, excluding ``unknown``/``unavailable``."""
     state_obj = hass.states.get(entity_id)
     if state_obj is None:
         return []
@@ -54,7 +62,7 @@ def _get_known_states(hass: Any, entity_id: str) -> list[str]:
 
 
 def _get_entity_display_name(hass: Any, entity_id: str) -> str:
-    """Return a friendly display name for an entity, falling back to entity_id."""
+    """Return a friendly display name for an entity, falling back to ``entity_id``."""
     state_obj = hass.states.get(entity_id)
     if state_obj is None:
         return entity_id
@@ -82,6 +90,12 @@ def _build_speakers_volume_schema(
     current_fade_duration: float = DEFAULT_FADE_DURATION,
     current_fade_curve: str = DEFAULT_FADE_CURVE,
 ) -> vol.Schema:
+    """
+    Build the voluptuous schema for the "Speakers & Volume" options sub-page.
+    The ``current_*`` parameters are used as the form's pre-populated defaults.
+    A selector-based schema is returned when ``ha_selector`` is available, otherwise plain types.
+    """
+    # Try selector-based schema first (richer UI); fall back to plain voluptuous if unavailable.
     if ha_selector is not None:
         try:
             return vol.Schema(
@@ -120,6 +134,7 @@ def _build_speakers_volume_schema(
 
 
 def _build_presence_sensors_schema(current_sensors: list[str]) -> vol.Schema:
+    """Build the first-pass schema for the "Presence Sensors" sub-page (sensor multi-select only)."""
     if ha_selector is not None:
         try:
             return vol.Schema(
@@ -139,7 +154,13 @@ def _build_presence_sensors_with_states_schema(
     hass: Any,
     existing_occupied: dict[str, list[str]],
 ) -> tuple[vol.Schema, str, dict[str, str]]:
-    """Build schema for the second-pass presence sensors form (sensor + state mapping)."""
+    """
+    Build the second-pass presence sensors schema — sensor multi-select plus per-sensor state mapping.
+    :param pending_sensors: Sensor entity IDs chosen in the first pass; one state-mapping field is added per sensor.
+    :param existing_occupied: Previously saved occupied-state mapping, keyed by entity ID.
+    :return: ``(schema, no_states_warning, field_map)`` — the voluptuous schema, a user-facing warning
+        string when any sensor lacked selectable states, and a mapping from form field label to entity ID.
+    """
     sensors_with_no_states: list[str] = []
     schema_dict: dict[Any, Any] = {}
     field_map: dict[str, str] = {}
@@ -214,11 +235,17 @@ def _build_presence_sensors_with_states_schema(
     return vol.Schema(schema_dict), no_states_warning, field_map
 
 class RoamingMusicConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Config flow that auto-creates the singleton global entry and, thereafter, per-room entries."""
+
     VERSION = 1
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """
+        Entry point for user-initiated setup. The first invocation creates the singleton global entry;
+        subsequent invocations forward to the room step.
+        """
         existing = self._async_current_entries()
         global_exists = any(
             entry.data.get("type") == ENTRY_TYPE_GLOBAL for entry in existing
@@ -239,6 +266,7 @@ class RoamingMusicConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_room(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Collect a room name and create a room config entry."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -270,20 +298,25 @@ class RoamingMusicConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the no-op options flow for global entries, the full options flow for room entries."""
         if config_entry.data.get("type") == ENTRY_TYPE_GLOBAL:
             return _GlobalNoOpOptionsFlow(config_entry)
         return RoamingMusicOptionsFlow(config_entry)
 
 class _GlobalNoOpOptionsFlow(OptionsFlow):
+    """Options flow for the global entry — immediately aborts; the global entry has no user options."""
+
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Abort the global options flow with the ``global_no_options`` reason."""
         return self.async_abort(reason="global_no_options")
 
 class RoamingMusicOptionsFlow(OptionsFlow):
+    """Menu-style options flow for room entries with Speakers & Volume and Presence Sensors sub-pages."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
@@ -310,6 +343,7 @@ class RoamingMusicOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Render the menu of options sub-pages and surface any pending save-confirmation notice."""
         notice = self._menu_notice
         self._menu_notice = ""
         return self.async_show_menu(
@@ -321,6 +355,7 @@ class RoamingMusicOptionsFlow(OptionsFlow):
     async def async_step_speakers_volume(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Render and process the "Speakers & Volume" sub-page."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -386,6 +421,9 @@ class RoamingMusicOptionsFlow(OptionsFlow):
     async def async_step_presence_sensors(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Render and process the "Presence Sensors" sub-page as a two-pass form."""
+        # First pass collects sensor entity IDs; second pass adds per-sensor occupied-state mapping fields
+        # that are rebuilt whenever the selected sensor list changes.
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -511,6 +549,7 @@ class RoamingMusicOptionsFlow(OptionsFlow):
     async def async_step_done(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Finalize the options flow by committing the accumulated options as a new entry."""
         _LOGGER.debug(
             "Room options saved: room=%s options=%s",
             self._entry.title,
