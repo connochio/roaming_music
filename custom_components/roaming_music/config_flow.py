@@ -320,10 +320,8 @@ class RoamingMusicOptionsFlow(OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
-        # AMD-2 (Story 3.5): CONF_FADE_CURVE intentionally omitted — coordinator-triggered
-        # fades always use logarithmic; the exposed fade_volume service still accepts a curve
-        # parameter. Any stale CONF_FADE_CURVE in config_entry.options is ignored here and
-        # dropped the next time the user saves the options flow.
+        # The "fade_curve" key is intentionally omitted — coordinator-triggered fades
+        # always use logarithmic; the exposed fade_volume service still accepts a curve parameter.
         self._accumulated_options: dict[str, Any] = {
             CONF_SPEAKERS: list(config_entry.options.get(CONF_SPEAKERS, [])),
             CONF_PRESENCE_SENSORS: list(config_entry.options.get(CONF_PRESENCE_SENSORS, [])),
@@ -541,14 +539,3 @@ class RoamingMusicOptionsFlow(OptionsFlow):
             errors=errors,
             description_placeholders={"no_states_warning": no_states_warning},
         )
-
-    async def async_step_done(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Finalize the options flow by committing the accumulated options as a new entry."""
-        _LOGGER.debug(
-            "Room options saved: room=%s options=%s",
-            self._entry.title,
-            self._accumulated_options,
-        )
-        return self.async_create_entry(title="", data=self._accumulated_options)

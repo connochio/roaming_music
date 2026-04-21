@@ -142,9 +142,7 @@ class RoamingCoordinator:
             return
 
         fade_duration = room.fade_duration
-        # AMD-2 (Story 3.5): Coordinator-triggered fades always use logarithmic. The
-        # exposed ``fade_volume`` service still accepts a curve parameter, but presence-driven
-        # room fades intentionally ignore any stale ``CONF_FADE_CURVE`` key in ``room.options``.
+        # Coordinator-triggered fades always use logarithmic. The exposed ``fade_volume`` service still accepts a curve parameter.
         fade_curve = FADE_CURVE_LOGARITHMIC
 
         room.fade_active = True
