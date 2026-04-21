@@ -1,3 +1,5 @@
+"""Roaming Music switch platform — master roaming-enabled switch on the global entry."""
+
 from __future__ import annotations
 
 import logging
@@ -19,6 +21,7 @@ async def async_setup_entry(
 	entry: ConfigEntry,
 	async_add_entities,
 ) -> None:
+	"""Install the master switch on the global config entry; no-op for room entries."""
 	if entry.data.get("type") != ENTRY_TYPE_GLOBAL:
 		return
 
@@ -26,6 +29,7 @@ async def async_setup_entry(
 	async_add_entities([RoamingMasterSwitch(coordinator)])
 
 class RoamingMasterSwitch(SwitchEntity, RestoreEntity):
+	"""Master switch that gates all roaming volume actions; restored on restart."""
 
 	_attr_has_entity_name = True
 	_attr_translation_key = "master_switch"

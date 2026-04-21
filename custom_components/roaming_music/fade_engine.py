@@ -1,3 +1,5 @@
+"""Roaming Music fade engine — async volume transitions with speaker availability awareness."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +17,12 @@ _STEP_INTERVAL: float = 0.25
 
 @dataclass
 class FadeResult:
+    """
+    Summary of a completed (or aborted) fade, for coordinator diagnostics and error reporting.
+    :param commanded_speakers: Entity IDs that received at least one ``volume_set`` call.
+    :param skipped_speakers: ``(entity_id, reason)`` tuples for speakers skipped due to unavailability.
+    :param call_timeouts: Number of individual ``volume_set`` calls that timed out during the fade.
+    """
 
     commanded_speakers: list[str]
     skipped_speakers: list[tuple[str, str]]
@@ -22,6 +30,7 @@ class FadeResult:
 
     @property
     def all_unavailable(self) -> bool:
+        """Return True when no speaker ever received a volume command during the fade."""
         return not self.commanded_speakers
 
 async def fade_volume(
@@ -33,6 +42,15 @@ async def fade_volume(
     room_name: str | None = None,
     volume_set_timeout: float = VOLUME_SET_CALL_TIMEOUT,
 ) -> FadeResult:
+    """
+    Fade one or more media players from their current volume toward ``target_volume``.
+    :param target_volume: Final volume level in the range ``0.0``–``1.0``.
+    :param duration: Fade duration in seconds; ``<= 0`` performs a single immediate ``volume_set``.
+    :param curve: Fade curve name — ``"logarithmic"``, ``"bezier"``, or ``"linear"``.
+    :param room_name: Optional room label included in diagnostic log messages.
+    :param volume_set_timeout: Per-call timeout (seconds) for individual ``volume_set`` service calls.
+    :return: :class:`FadeResult` describing commanded speakers, skipped speakers, and timeout count.
+    """
     room_label = room_name or "unknown"
     commanded: set[str] = set()
     skipped_by_entity: dict[str, str] = {}
@@ -40,6 +58,7 @@ async def fade_volume(
     call_timeouts: int = 0
 
     def _record_skips(skipped: list[tuple[str, str]]) -> None:
+        # Log each (entity_id, reason) pair once per fade to avoid per-step log spam.
         for entity_id, reason in skipped:
             skipped_by_entity[entity_id] = reason
             key = (entity_id, reason)
@@ -65,6 +84,7 @@ async def fade_volume(
         )
         return FadeResult(commanded_speakers=[], skipped_speakers=list(skipped_by_entity.items()))
 
+    # Duration <= 0: single immediate volume_set, no fade loop.
     if duration <= 0:
         try:
             await asyncio.wait_for(
@@ -104,6 +124,7 @@ async def fade_volume(
         curve,
     )
 
+    # Stepped fade loop — re-classify each step so newly-unavailable speakers are dropped mid-fade.
     for idx in range(total_steps):
         step_entities, skipped_entities = _classify_speakers(hass, entity_ids)
         _record_skips(skipped_entities)
@@ -138,6 +159,7 @@ async def fade_volume(
             )
         await asyncio.sleep(_STEP_INTERVAL)
 
+    # Final pin to exact target (guards against floating-point drift accumulated in the step loop).
     final_entities, skipped_entities = _classify_speakers(hass, entity_ids)
     _record_skips(skipped_entities)
     if final_entities:
@@ -178,10 +200,18 @@ async def fade_volume(
         call_timeouts=call_timeouts,
     )
 
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
 def _classify_speakers(
     hass: HomeAssistant,
     entity_ids: list[str],
 ) -> tuple[list[str], list[tuple[str, str]]]:
+    """
+    Partition speaker entity IDs into available and skipped lists based on their HA state.
+    :return: ``(available, skipped)`` where ``skipped`` is a list of ``(entity_id, reason)`` tuples.
+    """
     available: list[str] = []
     skipped: list[tuple[str, str]] = []
     for entity_id in entity_ids:
@@ -199,6 +229,7 @@ def _classify_speakers(
     return available, skipped
 
 def _get_current_volume(hass: HomeAssistant, entity_id: str) -> float:
+    """Read the current ``volume_level`` attribute for a media player, defaulting to 0.0."""
     state = hass.states.get(entity_id)
     if state is None:
         return 0.0
@@ -208,6 +239,11 @@ def _get_current_volume(hass: HomeAssistant, entity_id: str) -> float:
         return 0.0
 
 def _compute_curve_factor(t: float, curve: str) -> float:
+    """
+    Map a normalized time ``t`` in ``[0, 1]`` to a curve factor in ``[0, 1]`` for fade interpolation.
+    :param t: Normalized fade progress (``(step_index + 1) / total_steps``).
+    :param curve: Curve name — ``"logarithmic"``, ``"bezier"``, or any other value for linear.
+    """
     if curve == "logarithmic":
         return t / (1 + (1 - t))
     if curve == "bezier":
