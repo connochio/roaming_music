@@ -1,3 +1,5 @@
+"""Roaming Music number platform — per-room default-volume and fade-duration entities."""
+
 from __future__ import annotations
 
 import logging
@@ -30,6 +32,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities,
 ) -> None:
+    """Install the per-room default-volume and fade-duration number entities for a room entry."""
     if entry.data.get("type") != ENTRY_TYPE_ROOM:
         return
 
@@ -40,6 +43,7 @@ async def async_setup_entry(
     ])
 
 class RoamingRoomVolume(NumberEntity, RestoreEntity):
+    """Per-room target volume slider; its value drives occupied-state fades for the room."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "default_volume"
@@ -85,6 +89,7 @@ class RoamingRoomVolume(NumberEntity, RestoreEntity):
         )
 
 class RoamingRoomFadeDuration(NumberEntity, RestoreEntity):
+    """Per-room fade duration slider (seconds); clamped to the ``1.0``–``30.0`` range on restore."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "fade_duration"
