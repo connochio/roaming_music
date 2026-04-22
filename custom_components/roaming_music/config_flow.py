@@ -13,18 +13,15 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_DEFAULT_VOLUME,
-    CONF_FADE_CURVE,
     CONF_FADE_DURATION,
     CONF_OCCUPIED_STATES,
     CONF_PRESENCE_SENSORS,
     CONF_SPEAKERS,
-    DEFAULT_FADE_CURVE,
     DEFAULT_FADE_DURATION,
     DEFAULT_VOLUME,
     DOMAIN,
     ENTRY_TYPE_GLOBAL,
     ENTRY_TYPE_ROOM,
-    FADE_CURVES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -71,6 +68,14 @@ def _get_entity_display_name(hass: Any, entity_id: str) -> str:
         return friendly
     return entity_id
 
+
+def _entity_is_available(hass: Any, entity_id: str) -> bool:
+    """Return True when the entity exists and is not currently unknown/unavailable."""
+    state_obj = hass.states.get(entity_id)
+    if state_obj is None:
+        return False
+    return state_obj.state not in _EXCLUDED_STATES
+
 OPTIONS_STEP_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_SPEAKERS, default=[]): [str],
@@ -88,7 +93,6 @@ def _build_speakers_volume_schema(
     current_speakers: list[str],
     current_default: float = DEFAULT_VOLUME,
     current_fade_duration: float = DEFAULT_FADE_DURATION,
-    current_fade_curve: str = DEFAULT_FADE_CURVE,
 ) -> vol.Schema:
     """
     Build the voluptuous schema for the "Speakers & Volume" options sub-page.
@@ -109,9 +113,6 @@ def _build_speakers_volume_schema(
                     vol.Optional(CONF_FADE_DURATION, default=current_fade_duration): ha_selector.selector(
                         {"number": {"min": 1.0, "max": 30.0, "step": 0.5, "mode": "slider", "unit_of_measurement": "s"}}
                     ),
-                    vol.Optional(CONF_FADE_CURVE, default=current_fade_curve): ha_selector.selector(
-                        {"select": {"options": list(FADE_CURVES)}}
-                    ),
                 }
             )
         except Exception:
@@ -128,7 +129,6 @@ def _build_speakers_volume_schema(
                 vol.Coerce(float),
                 vol.Range(min=1.0, max=30.0),
             ),
-            vol.Optional(CONF_FADE_CURVE, default=current_fade_curve): vol.In(FADE_CURVES),
         }
     )
 
@@ -320,13 +320,14 @@ class RoamingMusicOptionsFlow(OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
+        # The "fade_curve" key is intentionally omitted — coordinator-triggered fades
+        # always use logarithmic; the exposed fade_volume service still accepts a curve parameter.
         self._accumulated_options: dict[str, Any] = {
             CONF_SPEAKERS: list(config_entry.options.get(CONF_SPEAKERS, [])),
             CONF_PRESENCE_SENSORS: list(config_entry.options.get(CONF_PRESENCE_SENSORS, [])),
             CONF_OCCUPIED_STATES: dict(config_entry.options.get(CONF_OCCUPIED_STATES, {})),
             CONF_DEFAULT_VOLUME: config_entry.options.get(CONF_DEFAULT_VOLUME, DEFAULT_VOLUME),
             CONF_FADE_DURATION: config_entry.options.get(CONF_FADE_DURATION, DEFAULT_FADE_DURATION),
-            CONF_FADE_CURVE: config_entry.options.get(CONF_FADE_CURVE, DEFAULT_FADE_CURVE),
         }
         self._pending_sensors: list[str] = []
         self._show_state_mapping: bool = False
@@ -372,22 +373,17 @@ class RoamingMusicOptionsFlow(OptionsFlow):
                 fade_duration = DEFAULT_FADE_DURATION
                 errors[CONF_FADE_DURATION] = "fade_duration_out_of_range"
 
-            fade_curve = str(user_input.get(CONF_FADE_CURVE, DEFAULT_FADE_CURVE))
-
             if not 0.0 <= default_volume <= 1.0:
                 errors[CONF_DEFAULT_VOLUME] = "default_volume_out_of_range"
 
             if not 1.0 <= fade_duration <= 30.0:
                 errors[CONF_FADE_DURATION] = "fade_duration_out_of_range"
 
-            if fade_curve not in FADE_CURVES:
-                errors[CONF_FADE_CURVE] = "fade_curve_invalid"
-
             for entity_id in speakers:
                 if entity_id.split(".")[0] != "media_player":
                     errors[CONF_SPEAKERS] = "speaker_wrong_domain"
                     break
-                if self.hass.states.get(entity_id) is None:
+                if not _entity_is_available(self.hass, entity_id):
                     errors[CONF_SPEAKERS] = "entity_not_found"
                     break
 
@@ -395,7 +391,6 @@ class RoamingMusicOptionsFlow(OptionsFlow):
                 self._accumulated_options[CONF_SPEAKERS] = speakers
                 self._accumulated_options[CONF_DEFAULT_VOLUME] = default_volume
                 self._accumulated_options[CONF_FADE_DURATION] = fade_duration
-                self._accumulated_options[CONF_FADE_CURVE] = fade_curve
                 _LOGGER.debug(
                     "Speakers & volume saved: room=%s speakers=%s default_volume=%s",
                     self._entry.title,
@@ -410,7 +405,6 @@ class RoamingMusicOptionsFlow(OptionsFlow):
             self._accumulated_options.get(CONF_SPEAKERS, []),
             self._accumulated_options.get(CONF_DEFAULT_VOLUME, DEFAULT_VOLUME),
             self._accumulated_options.get(CONF_FADE_DURATION, DEFAULT_FADE_DURATION),
-            self._accumulated_options.get(CONF_FADE_CURVE, DEFAULT_FADE_CURVE),
         )
         return self.async_show_form(
             step_id="speakers_volume",
@@ -431,7 +425,7 @@ class RoamingMusicOptionsFlow(OptionsFlow):
                 # First pass: sensor selection only
                 sensors = user_input.get(CONF_PRESENCE_SENSORS, [])
                 for entity_id in sensors:
-                    if self.hass.states.get(entity_id) is None:
+                    if not _entity_is_available(self.hass, entity_id):
                         errors[CONF_PRESENCE_SENSORS] = "entity_not_found"
                         break
 
@@ -545,14 +539,3 @@ class RoamingMusicOptionsFlow(OptionsFlow):
             errors=errors,
             description_placeholders={"no_states_warning": no_states_warning},
         )
-
-    async def async_step_done(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Finalize the options flow by committing the accumulated options as a new entry."""
-        _LOGGER.debug(
-            "Room options saved: room=%s options=%s",
-            self._entry.title,
-            self._accumulated_options,
-        )
-        return self.async_create_entry(title="", data=self._accumulated_options)

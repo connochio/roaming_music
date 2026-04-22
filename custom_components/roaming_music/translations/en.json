@@ -38,8 +38,7 @@
         "data": {
           "speakers": "Speakers",
           "default_volume": "Default Volume",
-          "fade_duration": "Fade Duration (seconds)",
-          "fade_curve": "Fade Curve"
+          "fade_duration": "Fade Duration (seconds)"
         }
       },
       "presence_sensors": {
@@ -55,8 +54,7 @@
       "no_states_for_sensor": "This sensor has no selectable states. It will not trigger occupancy until its state is known.",
       "speaker_wrong_domain": "Speakers must be media_player entities.",
       "default_volume_out_of_range": "Default volume must be between 0.0 and 1.0.",
-      "fade_duration_out_of_range": "Fade duration must be between 1.0 and 30.0 seconds.",
-      "fade_curve_invalid": "Fade curve must be one of: logarithmic, bezier, or linear."
+      "fade_duration_out_of_range": "Fade duration must be between 1.0 and 30.0 seconds."
     }
   },
   "entity": {
