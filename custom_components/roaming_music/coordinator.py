@@ -83,6 +83,9 @@ class RoamingCoordinator:
             previous,
             enabled,
         )
+        # Fire the dispatcher on the value-changed branch so global sensors re-gate
+        # on ``roaming_enabled`` when the master switch toggles between presence events.
+        self.dispatch_state_update()
 
     @property
     def roaming_state(self) -> str:
@@ -108,6 +111,31 @@ class RoamingCoordinator:
             r.name: r.last_error
             for r in self._rooms.values()
             if r.last_error is not None
+        }
+
+    @property
+    def active_speaker_count(self) -> int:
+        """Total configured speakers across currently-occupied rooms; 0 when roaming disabled."""
+        if not self.roaming_enabled:
+            return 0
+        return sum(
+            len(room.options.get(CONF_SPEAKERS, []))
+            for room in self._rooms.values()
+            if room.occupied and room.options is not None
+        )
+
+    @property
+    def per_room_speaker_counts(self) -> dict[str, int]:
+        """Per-occupied-room speaker-count map; {} when roaming disabled.
+
+        Includes occupied rooms with 0 configured speakers (OQ-1 resolution: include-with-0).
+        """
+        if not self.roaming_enabled:
+            return {}
+        return {
+            room.name: len(room.options.get(CONF_SPEAKERS, []) if room.options else [])
+            for room in self._rooms.values()
+            if room.occupied
         }
 
     @callback

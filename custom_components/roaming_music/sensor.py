@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -29,6 +29,7 @@ async def async_setup_entry(
     async_add_entities([
         RoamingStateSensor(coordinator),
         ActiveRoomsSensor(coordinator),
+        ActiveSpeakerCountSensor(coordinator),
     ])
 
 class RoamingStateSensor(SensorEntity):
@@ -94,4 +95,46 @@ class ActiveRoomsSensor(SensorEntity):
             "ActiveRoomsSensor updated: count=%s rooms=%s",
             self._attr_native_value,
             self._coordinator.active_room_names,
+        )
+
+
+class ActiveSpeakerCountSensor(SensorEntity):
+    """Count of configured speakers across currently-occupied rooms."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "active_speakers"
+    _attr_unique_id = "roaming_music_active_speakers"
+    _attr_native_unit_of_measurement = "speakers"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: RoamingCoordinator) -> None:
+        self._coordinator = coordinator
+        self._attr_native_value = coordinator.active_speaker_count
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(**DEVICE_INFO)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "per_room": self._coordinator.per_room_speaker_counts,
+            "roaming_enabled": self._coordinator.roaming_enabled,
+        }
+
+    async def async_added_to_hass(self) -> None:
+        unsub = async_dispatcher_connect(
+            self.hass, SIGNAL_STATE_CHANGED, self._handle_state_update
+        )
+        self.async_on_remove(unsub)
+
+    @callback
+    def _handle_state_update(self) -> None:
+        count = self._coordinator.active_speaker_count
+        self._attr_native_value = count
+        self.async_write_ha_state()
+        _LOGGER.debug(
+            "ActiveSpeakerCountSensor updated: count=%s per_room=%s",
+            count,
+            self._coordinator.per_room_speaker_counts,
         )
