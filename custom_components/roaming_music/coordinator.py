@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
@@ -110,6 +110,7 @@ class RoamingCoordinator:
             if r.last_error is not None
         }
 
+    @callback
     def dispatch_state_update(self) -> None:
         """Fire the integration's dispatcher signal so global sensors refresh their native values."""
         async_dispatcher_send(self._hass, SIGNAL_STATE_CHANGED)
@@ -309,6 +310,7 @@ class RoamingCoordinator:
         )
         sensors = list(entry.options.get(CONF_PRESENCE_SENSORS, []))
         if sensors:
+            @callback
             def _on_sensor_change(event: Any) -> None:
                 self.handle_presence_change(
                     entry.entry_id,
