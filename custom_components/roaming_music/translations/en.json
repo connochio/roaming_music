@@ -20,9 +20,6 @@
     }
   },
   "options": {
-    "abort": {
-      "global_no_options": "The Roaming Music device has no configurable options. Add a room entry to configure speakers and presence sensors."
-    },
     "step": {
       "init": {
         "title": "Room Configuration",
@@ -47,6 +44,16 @@
         "data": {
           "presence_sensors": "Presence Sensors"
         }
+      },
+      "global": {
+        "title": "Roaming Music Settings",
+        "description": "Configure global behaviour for Roaming Music",
+        "data": {
+          "empty_rooms_action": "No Presence Detected Action",
+          "empty_rooms_grace_period": "No Presence Action Grace Period (seconds)",
+          "pause_target_mode": "Target Mode\n\nTarget Mode Auto: Roaming Music tries to determine which speakers to pause.\nTarget Mode Manual: Roaming Music will pause the selected speaker entitie(s)",
+          "pause_target_entities": "Speakers to Action (Manual Mode Only)"
+        }
       }
     },
     "error": {
@@ -54,7 +61,9 @@
       "no_states_for_sensor": "This sensor has no selectable states. It will not trigger occupancy until its state is known.",
       "speaker_wrong_domain": "Speakers must be media_player entities.",
       "default_volume_out_of_range": "Default volume must be between 0.0 and 1.0.",
-      "fade_duration_out_of_range": "Fade duration must be between 1.0 and 30.0 seconds."
+      "fade_duration_out_of_range": "Fade duration must be between 1.0 and 30.0 seconds.",
+      "grace_period_out_of_range": "Grace period must be between 0 and 1800 seconds.",
+      "pause_target_entities_required": "At least one pause target entity is required when mode is Manual and action is Pause or Stop."
     }
   },
   "entity": {

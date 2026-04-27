@@ -13,15 +13,28 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_DEFAULT_VOLUME,
+    CONF_EMPTY_ROOMS_ACTION,
+    CONF_EMPTY_ROOMS_GRACE_PERIOD,
     CONF_FADE_DURATION,
     CONF_OCCUPIED_STATES,
+    CONF_PAUSE_TARGET_ENTITIES,
+    CONF_PAUSE_TARGET_MODE,
     CONF_PRESENCE_SENSORS,
     CONF_SPEAKERS,
+    DEFAULT_EMPTY_ACTION,
+    DEFAULT_EMPTY_GRACE_PERIOD,
     DEFAULT_FADE_DURATION,
+    DEFAULT_PAUSE_TARGET_MODE,
     DEFAULT_VOLUME,
     DOMAIN,
+    EMPTY_ACTION_MUTE,
+    EMPTY_ACTIONS,
+    EMPTY_GRACE_PERIOD_MAX,
+    EMPTY_GRACE_PERIOD_MIN,
     ENTRY_TYPE_GLOBAL,
     ENTRY_TYPE_ROOM,
+    PAUSE_TARGET_MODE_MANUAL,
+    PAUSE_TARGET_MODES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,6 +142,62 @@ def _build_speakers_volume_schema(
                 vol.Coerce(float),
                 vol.Range(min=1.0, max=30.0),
             ),
+        }
+    )
+
+
+def _build_global_options_schema(
+    current_action: str = DEFAULT_EMPTY_ACTION,
+    current_grace_period: float | int = DEFAULT_EMPTY_GRACE_PERIOD,
+    current_mode: str = DEFAULT_PAUSE_TARGET_MODE,
+    current_entities: list[str] | None = None,
+) -> vol.Schema:
+    """
+    Build the voluptuous schema for the global Roaming Music options flow.
+    The ``current_*`` parameters are used as the form's pre-populated defaults.
+    A selector-based schema is returned when ``ha_selector`` is available, otherwise plain types.
+    """
+    if current_entities is None:
+        current_entities = []
+
+    if ha_selector is not None:
+        try:
+            return vol.Schema(
+                {
+                    vol.Optional(CONF_EMPTY_ROOMS_ACTION, default=current_action): ha_selector.selector(
+                        {"select": {"options": list(EMPTY_ACTIONS)}}
+                    ),
+                    vol.Optional(CONF_EMPTY_ROOMS_GRACE_PERIOD, default=current_grace_period): ha_selector.selector(
+                        {
+                            "number": {
+                                "min": EMPTY_GRACE_PERIOD_MIN,
+                                "max": EMPTY_GRACE_PERIOD_MAX,
+                                "step": 1,
+                                "mode": "box",
+                                "unit_of_measurement": "s",
+                            }
+                        }
+                    ),
+                    vol.Optional(CONF_PAUSE_TARGET_MODE, default=current_mode): ha_selector.selector(
+                        {"select": {"options": list(PAUSE_TARGET_MODES)}}
+                    ),
+                    vol.Optional(CONF_PAUSE_TARGET_ENTITIES, default=current_entities): ha_selector.selector(
+                        {"entity": {"domain": "media_player", "multiple": True}}
+                    ),
+                }
+            )
+        except Exception:
+            pass
+
+    return vol.Schema(
+        {
+            vol.Optional(CONF_EMPTY_ROOMS_ACTION, default=current_action): vol.In(EMPTY_ACTIONS),
+            vol.Optional(CONF_EMPTY_ROOMS_GRACE_PERIOD, default=current_grace_period): vol.All(
+                vol.Coerce(float),
+                vol.Range(min=EMPTY_GRACE_PERIOD_MIN, max=EMPTY_GRACE_PERIOD_MAX),
+            ),
+            vol.Optional(CONF_PAUSE_TARGET_MODE, default=current_mode): vol.In(PAUSE_TARGET_MODES),
+            vol.Optional(CONF_PAUSE_TARGET_ENTITIES, default=current_entities): [str],
         }
     )
 
@@ -298,13 +367,13 @@ class RoamingMusicConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        """Return the no-op options flow for global entries, the full options flow for room entries."""
+        """Return the global all-rooms-empty options flow for global entries, room options flow otherwise."""
         if config_entry.data.get("type") == ENTRY_TYPE_GLOBAL:
-            return _GlobalNoOpOptionsFlow(config_entry)
+            return RoamingMusicGlobalOptionsFlow(config_entry)
         return RoamingMusicOptionsFlow(config_entry)
 
-class _GlobalNoOpOptionsFlow(OptionsFlow):
-    """Options flow for the global entry — immediately aborts; the global entry has no user options."""
+class RoamingMusicGlobalOptionsFlow(OptionsFlow):
+    """Options flow for the global config entry. Configures all-rooms-empty behaviour."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
@@ -312,8 +381,73 @@ class _GlobalNoOpOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Abort the global options flow with the ``global_no_options`` reason."""
-        return self.async_abort(reason="global_no_options")
+        """Render the global options form."""
+        return await self.async_step_global(user_input)
+
+    async def async_step_global(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Render and process the global options form (action, grace period, target mode/entities)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            action = user_input.get(CONF_EMPTY_ROOMS_ACTION, DEFAULT_EMPTY_ACTION)
+            try:
+                grace_period = float(
+                    user_input.get(
+                        CONF_EMPTY_ROOMS_GRACE_PERIOD, DEFAULT_EMPTY_GRACE_PERIOD
+                    )
+                )
+            except (TypeError, ValueError):
+                grace_period = float(DEFAULT_EMPTY_GRACE_PERIOD)
+                errors[CONF_EMPTY_ROOMS_GRACE_PERIOD] = "grace_period_out_of_range"
+
+            if not EMPTY_GRACE_PERIOD_MIN <= grace_period <= EMPTY_GRACE_PERIOD_MAX:
+                errors[CONF_EMPTY_ROOMS_GRACE_PERIOD] = "grace_period_out_of_range"
+
+            mode = user_input.get(CONF_PAUSE_TARGET_MODE, DEFAULT_PAUSE_TARGET_MODE)
+            entities = list(user_input.get(CONF_PAUSE_TARGET_ENTITIES, []))
+
+            # Manual entities are only required when an action that dispatches playback
+            # (pause/stop) is selected; ``mute`` skips the resolver entirely.
+            if (
+                action != EMPTY_ACTION_MUTE
+                and mode == PAUSE_TARGET_MODE_MANUAL
+                and not entities
+            ):
+                errors[CONF_PAUSE_TARGET_ENTITIES] = "pause_target_entities_required"
+
+            if not errors:
+                _LOGGER.debug(
+                    "Global options saved: action=%s grace=%s mode=%s entities=%s",
+                    action,
+                    grace_period,
+                    mode,
+                    entities,
+                )
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_EMPTY_ROOMS_ACTION: action,
+                        CONF_EMPTY_ROOMS_GRACE_PERIOD: grace_period,
+                        CONF_PAUSE_TARGET_MODE: mode,
+                        CONF_PAUSE_TARGET_ENTITIES: entities,
+                    },
+                )
+
+        data_schema = _build_global_options_schema(
+            self._entry.options.get(CONF_EMPTY_ROOMS_ACTION, DEFAULT_EMPTY_ACTION),
+            self._entry.options.get(
+                CONF_EMPTY_ROOMS_GRACE_PERIOD, DEFAULT_EMPTY_GRACE_PERIOD
+            ),
+            self._entry.options.get(CONF_PAUSE_TARGET_MODE, DEFAULT_PAUSE_TARGET_MODE),
+            list(self._entry.options.get(CONF_PAUSE_TARGET_ENTITIES, [])),
+        )
+        return self.async_show_form(
+            step_id="global",
+            data_schema=data_schema,
+            errors=errors,
+        )
 
 class RoamingMusicOptionsFlow(OptionsFlow):
     """Menu-style options flow for room entries with Speakers & Volume and Presence Sensors sub-pages."""

@@ -18,14 +18,25 @@ from homeassistant.util import dt as dt_util
 from . import fade_engine
 from .const import (
     CONF_DEFAULT_VOLUME,
+    CONF_EMPTY_ROOMS_ACTION,
+    CONF_EMPTY_ROOMS_GRACE_PERIOD,
     CONF_FADE_DURATION,
     CONF_OCCUPIED_STATES,
+    CONF_PAUSE_TARGET_ENTITIES,
+    CONF_PAUSE_TARGET_MODE,
     CONF_PRESENCE_SENSORS,
     CONF_SPEAKERS,
+    DEFAULT_EMPTY_ACTION,
+    DEFAULT_EMPTY_GRACE_PERIOD,
     DEFAULT_FADE_DURATION,
+    DEFAULT_PAUSE_TARGET_MODE,
     DEFAULT_VOLUME,
+    EMPTY_ACTION_MUTE,
+    EMPTY_ACTION_PAUSE,
+    EMPTY_PAUSE_SERVICE_TIMEOUT,
     FADE_CURVE_LOGARITHMIC,
     FADE_TIMEOUT_BUFFER,
+    PAUSE_TARGET_MODE_MANUAL,
     ROAMING_STATE_ACTIVE,
     ROAMING_STATE_ERROR,
     ROAMING_STATE_FADING,
@@ -70,10 +81,14 @@ class RoamingCoordinator:
         self._room_listeners: dict[str, list[Callable[[], None]]] = {}
         self.roaming_enabled = True
         self._fade_tasks: dict[str, asyncio.Task] = {}
+        self._global_options: dict[str, Any] = {}
+        self._any_room_occupied: bool = False
+        self._empty_pause_task: asyncio.Task | None = None
+        self._pause_target_cache: list[str] = []
         _LOGGER.debug("RoamingCoordinator initialized")
 
     def set_roaming_enabled(self, enabled: bool) -> None:
-        """Update the global roaming-enabled flag; no-op when the value is unchanged."""
+        """Update the global roaming-enabled flag; no-op when the value is unchanged. Disabling cancels any pending empty-rooms pause/resume."""
         previous = self.roaming_enabled
         if enabled == previous:
             return
@@ -83,9 +98,29 @@ class RoamingCoordinator:
             previous,
             enabled,
         )
-        # Fire the dispatcher on the value-changed branch so global sensors re-gate
-        # on ``roaming_enabled`` when the master switch toggles between presence events.
+        if not enabled:
+            if self._empty_pause_task is not None and not self._empty_pause_task.done():
+                self._empty_pause_task.cancel()
+                _LOGGER.debug(
+                    "set_roaming_enabled(False): cancelled pending empty-rooms timer"
+                )
+            self._empty_pause_task = None
+            self._pause_target_cache = []
         self.dispatch_state_update()
+
+    def set_global_options(self, options: dict[str, Any]) -> None:
+        """
+        Replace the cached global config entry options used by the empty-rooms dispatcher.
+        :param options: Global config entry options snapshot (action, grace period, pause-target mode, entities).
+        """
+        self._global_options = dict(options)
+        _LOGGER.debug(
+            "Global options updated: action=%s grace=%s mode=%s entities=%s",
+            self._global_options.get(CONF_EMPTY_ROOMS_ACTION),
+            self._global_options.get(CONF_EMPTY_ROOMS_GRACE_PERIOD),
+            self._global_options.get(CONF_PAUSE_TARGET_MODE),
+            self._global_options.get(CONF_PAUSE_TARGET_ENTITIES),
+        )
 
     @property
     def roaming_state(self) -> str:
@@ -415,9 +450,10 @@ class RoamingCoordinator:
                     self.dispatch_fade(entry_id, room.target_volume)
                 else:
                     self.dispatch_fade(entry_id, 0.0)
+            self._handle_global_occupancy_transition()
             self.dispatch_state_update()
             return
-        
+
         if room.last_error == f"sensor {changed_entity_id} unavailable":
             room.last_error = None
             room.last_error_time = None
@@ -449,6 +485,7 @@ class RoamingCoordinator:
                 self.dispatch_fade(entry_id, room.target_volume)
             else:
                 self.dispatch_fade(entry_id, 0.0)
+        self._handle_global_occupancy_transition()
         self.dispatch_state_update()
 
     def _evaluate_room_occupancy(
@@ -505,16 +542,231 @@ class RoamingCoordinator:
             duration,
         )
 
+    def _handle_global_occupancy_transition(self) -> None:
+        """React to a global ``>0 ↔ 0`` occupancy transition; idempotent on no-op."""
+        new_any_occupied = any(r.occupied for r in self._rooms.values())
+        if new_any_occupied == self._any_room_occupied:
+            return
+        previous = self._any_room_occupied
+        self._any_room_occupied = new_any_occupied
+        if previous and not new_any_occupied:
+            self._on_all_rooms_empty()
+        elif not previous and new_any_occupied:
+            self._on_room_returned()
+
+    def _on_all_rooms_empty(self) -> None:
+        """Arm the empty-rooms grace-period timer when the configured action is pause or stop."""
+        if not self.roaming_enabled:
+            return
+        action = self._global_options.get(CONF_EMPTY_ROOMS_ACTION, DEFAULT_EMPTY_ACTION)
+        if action == EMPTY_ACTION_MUTE:
+            return
+        if self._empty_pause_task is not None and not self._empty_pause_task.done():
+            self._empty_pause_task.cancel()
+        try:
+            grace_period = float(
+                self._global_options.get(
+                    CONF_EMPTY_ROOMS_GRACE_PERIOD, DEFAULT_EMPTY_GRACE_PERIOD
+                )
+            )
+        except (TypeError, ValueError):
+            grace_period = float(DEFAULT_EMPTY_GRACE_PERIOD)
+        self._empty_pause_task = self._hass.async_create_task(
+            self._run_empty_pause(grace_period, action)
+        )
+        _LOGGER.debug(
+            "Empty-rooms timer armed: action=%s grace=%.1fs",
+            action,
+            grace_period,
+        )
+
+    def _on_room_returned(self) -> None:
+        """Cancel any pending empty-rooms timer and dispatch resume-play if a pause was issued."""
+        if self._empty_pause_task is not None and not self._empty_pause_task.done():
+            self._empty_pause_task.cancel()
+            _LOGGER.debug("Empty-rooms timer cancelled — room returned to occupied")
+        self._empty_pause_task = None
+        if self._pause_target_cache:
+            self._hass.async_create_task(self._execute_resume_play())
+
+    async def _run_empty_pause(self, grace_period: float, action: str) -> None:
+        """
+        Sleep for the grace period then dispatch the empty action; cancellation is silent.
+        :param grace_period: Delay in seconds before the action fires.
+        :param action: Empty-rooms action — one of ``EMPTY_ACTIONS``.
+        """
+        try:
+            await asyncio.sleep(grace_period)
+            await self._execute_empty_action(action)
+        except asyncio.CancelledError:
+            _LOGGER.debug("Empty-rooms timer cancelled during sleep/dispatch")
+            raise
+
+    async def _execute_empty_action(self, action: str) -> None:
+        """
+        Resolve the pause-target list and dispatch ``media_pause`` or ``media_stop`` per target.
+        :param action: Empty-rooms action — one of ``EMPTY_ACTIONS``.
+        """
+        targets = self._resolve_pause_target()
+        service_name = "media_pause" if action == EMPTY_ACTION_PAUSE else "media_stop"
+        for target in targets:
+            try:
+                await asyncio.wait_for(
+                    self._hass.services.async_call(
+                        "media_player",
+                        service_name,
+                        {"entity_id": target},
+                        blocking=True,
+                    ),
+                    timeout=EMPTY_PAUSE_SERVICE_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "Empty-rooms %s timed out: target=%s timeout=%.1fs",
+                    service_name,
+                    target,
+                    EMPTY_PAUSE_SERVICE_TIMEOUT,
+                )
+            except Exception as err:
+                _LOGGER.warning(
+                    "Empty-rooms %s failed: target=%s error=%s",
+                    service_name,
+                    target,
+                    err,
+                )
+        self._pause_target_cache = list(targets)
+        _LOGGER.debug(
+            "Empty-rooms action executed: action=%s service=%s targets=%s",
+            action,
+            service_name,
+            targets,
+        )
+
+    async def _execute_resume_play(self) -> None:
+        """Dispatch ``media_play`` to cached pause targets, skipping any already ``playing``."""
+        targets = list(self._pause_target_cache)
+        self._pause_target_cache = []
+        for target in targets:
+            state_obj = self._hass.states.get(target)
+            if state_obj is None or getattr(state_obj, "state", None) == "playing":
+                _LOGGER.debug(
+                    "Resume-play skipped (already playing or missing): target=%s",
+                    target,
+                )
+                continue
+            try:
+                await asyncio.wait_for(
+                    self._hass.services.async_call(
+                        "media_player",
+                        "media_play",
+                        {"entity_id": target},
+                        blocking=True,
+                    ),
+                    timeout=EMPTY_PAUSE_SERVICE_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "Resume-play timed out: target=%s timeout=%.1fs",
+                    target,
+                    EMPTY_PAUSE_SERVICE_TIMEOUT,
+                )
+            except Exception as err:
+                _LOGGER.warning(
+                    "Resume-play failed: target=%s error=%s",
+                    target,
+                    err,
+                )
+        _LOGGER.debug("Empty-rooms resume executed: targets=%s", targets)
+
+    def _resolve_pause_target(self) -> list[str]:
+        """Resolve the ``media_player`` entity_ids to pause/stop per the configured pause-target mode."""
+        mode = self._global_options.get(CONF_PAUSE_TARGET_MODE, DEFAULT_PAUSE_TARGET_MODE)
+        rm_speakers = sorted({
+            speaker
+            for room in self._rooms.values()
+            for speaker in (room.options or {}).get(CONF_SPEAKERS, [])
+        })
+
+        if mode == PAUSE_TARGET_MODE_MANUAL:
+            configured = list(
+                self._global_options.get(CONF_PAUSE_TARGET_ENTITIES, [])
+            )
+            result: list[str] = []
+            seen: set[str] = set()
+            for entity_id in configured:
+                state_obj = self._hass.states.get(entity_id)
+                state_value = (
+                    getattr(state_obj, "state", None) if state_obj is not None else None
+                )
+                if state_obj is None or state_value in ("unavailable", "unknown"):
+                    _LOGGER.warning(
+                        "_resolve_pause_target: manual entity unavailable, "
+                        "appending per-speaker fallback: entity=%s",
+                        entity_id,
+                    )
+                    for speaker in rm_speakers:
+                        if speaker not in seen:
+                            result.append(speaker)
+                            seen.add(speaker)
+                elif entity_id not in seen:
+                    result.append(entity_id)
+                    seen.add(entity_id)
+            return result
+
+        if not rm_speakers:
+            _LOGGER.debug(
+                "_resolve_pause_target: no RM-configured speakers, returning empty list"
+            )
+            return []
+        rm_set = set(rm_speakers)
+        candidates: list[tuple[int, str]] = []
+        for state in self._hass.states.async_all("media_player"):
+            if getattr(state, "state", None) != "playing":
+                continue
+            members = state.attributes.get("group_members") or []
+            if not members:
+                continue
+            try:
+                member_set = set(members)
+            except TypeError:
+                continue
+            if member_set >= rm_set:
+                candidates.append((len(member_set), state.entity_id))
+        if not candidates:
+            _LOGGER.debug(
+                "_resolve_pause_target: no group match — using per-speaker fallback "
+                "(%d speakers)",
+                len(rm_speakers),
+            )
+            return rm_speakers
+        candidates.sort(key=lambda c: (-c[0], c[1]))
+        best_cardinality, best_entity = candidates[0]
+        _LOGGER.debug(
+            "_resolve_pause_target: matched group=%s cardinality=%d",
+            best_entity,
+            best_cardinality,
+        )
+        return [best_entity]
+
     async def async_teardown(self) -> None:
-        """Cancel all presence listeners and fade tasks and clear coordinator state."""
+        """Cancel all presence listeners, fade tasks, and the empty-rooms task; clear coordinator state."""
         listener_count = sum(len(listeners) for listeners in self._room_listeners.values())
         active_fade_count = sum(1 for task in self._fade_tasks.values() if not task.done())
+        empty_pause_active = (
+            self._empty_pause_task is not None and not self._empty_pause_task.done()
+        )
         _LOGGER.debug(
-            "RoamingCoordinator teardown starting: rooms=%d listeners=%d active_fades=%d",
+            "RoamingCoordinator teardown starting: rooms=%d listeners=%d active_fades=%d empty_pause_active=%s",
             len(self._rooms),
             listener_count,
             active_fade_count,
+            empty_pause_active,
         )
+        if empty_pause_active:
+            self._empty_pause_task.cancel()
+            _LOGGER.debug("RoamingCoordinator teardown: empty-rooms task cancelled")
+        self._empty_pause_task = None
+        self._pause_target_cache = []
         for entry_id, listeners in self._room_listeners.items():
             self._cancel_listeners(entry_id, listeners)
         self._room_listeners.clear()

@@ -19,6 +19,23 @@ CONF_DEFAULT_VOLUME = "default_volume"
 CONF_FADE_DURATION = "fade_duration"
 CONF_FADE_CURVE = "fade_curve"
 
+# Global config keys. no presence detected behaviour
+CONF_EMPTY_ROOMS_ACTION = "empty_rooms_action"
+CONF_EMPTY_ROOMS_GRACE_PERIOD = "empty_rooms_grace_period"
+CONF_PAUSE_TARGET_MODE = "pause_target_mode"
+CONF_PAUSE_TARGET_ENTITIES = "pause_target_entities"
+
+# No presence detected action enum
+EMPTY_ACTION_MUTE = "mute"
+EMPTY_ACTION_PAUSE = "pause"
+EMPTY_ACTION_STOP = "stop"
+EMPTY_ACTIONS = (EMPTY_ACTION_MUTE, EMPTY_ACTION_PAUSE, EMPTY_ACTION_STOP)
+
+# Pause target mode enum. auto resolves at runtime; manual uses configured entity list
+PAUSE_TARGET_MODE_AUTO = "auto"
+PAUSE_TARGET_MODE_MANUAL = "manual"
+PAUSE_TARGET_MODES = (PAUSE_TARGET_MODE_AUTO, PAUSE_TARGET_MODE_MANUAL)
+
 # Sensor state value constants
 ROAMING_STATE_IDLE = "idle"
 ROAMING_STATE_ACTIVE = "active"
@@ -40,6 +57,18 @@ DEFAULT_FADE_CURVE = FADE_CURVE_LOGARITHMIC
 DEFAULT_VOLUME = 0.2
 FADE_TIMEOUT_BUFFER = 30.0
 VOLUME_SET_CALL_TIMEOUT = 10.0
+
+# No presence detected grace-period bounds and default (seconds)
+EMPTY_GRACE_PERIOD_MIN = 0
+EMPTY_GRACE_PERIOD_MAX = 1800
+DEFAULT_EMPTY_GRACE_PERIOD = 120
+
+# No presence detected defaults
+DEFAULT_EMPTY_ACTION = EMPTY_ACTION_MUTE
+DEFAULT_PAUSE_TARGET_MODE = PAUSE_TARGET_MODE_AUTO
+
+# Per-call timeout for pause/stop/play service dispatch (mirrors VOLUME_SET_CALL_TIMEOUT precedent)
+EMPTY_PAUSE_SERVICE_TIMEOUT = 10.0
 
 # Device info
 DEVICE_INFO = {

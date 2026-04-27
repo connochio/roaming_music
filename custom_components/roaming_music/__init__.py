@@ -14,6 +14,9 @@ from homeassistant.helpers import device_registry as dr
 
 from . import fade_engine
 from .const import (
+    CONF_EMPTY_ROOMS_ACTION,
+    CONF_EMPTY_ROOMS_GRACE_PERIOD,
+    CONF_PAUSE_TARGET_MODE,
     DOMAIN,
     ENTRY_TYPE_GLOBAL,
     ENTRY_TYPE_ROOM,
@@ -45,6 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry_type == ENTRY_TYPE_GLOBAL:
         coordinator = RoamingCoordinator(hass)
         hass.data.setdefault(DOMAIN, {})["coordinator"] = coordinator
+        coordinator.set_global_options(dict(entry.options))
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         _LOGGER.debug(
             "Roaming Music global entry setup complete: type=%s title=%s entry_id=%s",
@@ -52,6 +56,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.title,
             entry.entry_id,
         )
+
+        async def _async_global_options_updated(
+            hass: HomeAssistant, updated_entry: ConfigEntry
+        ) -> None:
+            coord = hass.data.get(DOMAIN, {}).get("coordinator")
+            if coord is not None:
+                coord.set_global_options(dict(updated_entry.options))
+                _LOGGER.debug(
+                    "Global options updated: action=%s grace=%s mode=%s",
+                    updated_entry.options.get(CONF_EMPTY_ROOMS_ACTION),
+                    updated_entry.options.get(CONF_EMPTY_ROOMS_GRACE_PERIOD),
+                    updated_entry.options.get(CONF_PAUSE_TARGET_MODE),
+                )
+
+        entry.async_on_unload(entry.add_update_listener(_async_global_options_updated))
 
         async def svc_fade_volume(call: ServiceCall) -> None:
             # Service handler wraps fade_engine.fade_volume in a timeout-bounded background task so
