@@ -89,7 +89,9 @@ class RoamingCoordinator:
 
     @property
     def roaming_state(self) -> str:
-        """Return the aggregate roaming state (``error``/``fading``/``active``/``idle``) across all rooms."""
+        """Return ``idle`` when roaming is disabled; otherwise return the aggregate per-room state (``error``/``fading``/``active``/``idle``)."""
+        if not self.roaming_enabled:
+            return ROAMING_STATE_IDLE
         rooms = self._rooms.values()
         if any(r.last_error is not None for r in rooms):
             return ROAMING_STATE_ERROR
